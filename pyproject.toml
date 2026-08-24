@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-jupyter"
+version = "0.1.0"
+description = "A small CLI for executing code in an existing Jupyter kernel"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "agent-jupyter contributors" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: POSIX",
+  "Operating System :: MacOS",
+]
+dependencies = [
+  "ipykernel>=6.29,<8",
+  "jupyter-client>=8.6,<9",
+]
+
+[project.scripts]
+agent-jupyter = "agent_jupyter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_jupyter = ["resources/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

@@ -1,0 +1,29 @@
+[workspace]
+name = "agent-jupyter"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64"]
+
+[dependencies]
+python = "3.12.*"
+ipykernel = ">=6.29,<8"
+jupyter_client = ">=8.6,<9"
+
+[pypi-dependencies]
+agent-jupyter = { path = ".", editable = true }
+
+[feature.test.dependencies]
+pytest = ">=8,<9"
+python-build = ">=1,<2"
+
+[feature.build.dependencies]
+rattler-build = ">=0.74,<0.75"
+
+[feature.build.tasks]
+build-conda = "rm -rf dist/conda && rattler-build build --recipe recipe/recipe.yaml --output-dir dist/conda"
+
+[environments]
+test = { features = ["test"], solve-group = "default" }
+build = { features = ["build"], solve-group = "build", no-default-feature = true }
+
+[tasks]
+test = "pytest"
