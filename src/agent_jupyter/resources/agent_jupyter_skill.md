@@ -19,8 +19,14 @@ commands are deterministic.
    agent-jupyter list --runtime-dir /path/to/extra/runtime
    ```
 
-   `list` scans runtime directories and reports stale or unreachable
-   connection files as errors; it does not delete them.
+   `list` returns responsive kernels, omits unreachable connection files, and
+   never deletes them. Identified entries include compact `language` and
+   `implementation` summaries when those string values are available; raw
+   `kernel_info` is not included. A responsive entry can lack those summaries
+   when identification times out. Use `info` on an explicit connection when
+   the complete raw `kernel_info` response is needed. If `complete` is false,
+   the discovery deadline produced partial
+   results; rerun with a larger `--timeout` when a complete inventory is needed.
 
 2. Inspect a selected kernel before using it:
 

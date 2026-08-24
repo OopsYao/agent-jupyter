@@ -1,11 +1,50 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+import agent_jupyter.cli as cli
 from agent_jupyter.cli import main
 from agent_jupyter.skill import SkillInstallError, install_skill, skill_text
+
+
+def test_list_outputs_discovery_completion(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "discover_kernels",
+        lambda runtime_dirs, **kwargs: {"kernels": [], "complete": False},
+    )
+
+    assert main(["list", "--timeout", "0.1"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {"kernels": [], "complete": False}
+
+
+def test_list_outputs_compact_kernel_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = {
+        "kernels": [
+            {
+                "connection": str(tmp_path / "kernel.json"),
+                "status": "identified",
+                "language": {"name": "python", "version": "3.12"},
+                "implementation": {"name": "ipykernel", "version": "6"},
+            }
+        ],
+        "complete": True,
+    }
+    monkeypatch.setattr(cli, "discover_kernels", lambda runtime_dirs, **kwargs: result)
+
+    assert main(["list"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == result
 
 
 def test_install_skill_writes_packaged_document(tmp_path: Path) -> None:
@@ -46,7 +85,9 @@ def test_install_skill_command_accepts_explicit_root(
     assert captured.err == ""
 
 
-def test_install_skill_uses_agents_default_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_skill_uses_agents_default_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
     destination = install_skill()

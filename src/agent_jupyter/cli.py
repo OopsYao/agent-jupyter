@@ -87,7 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="additional runtime directory to scan (repeatable)",
     )
-    _add_timeout(list_parser, "--probe-timeout", 2.0, "kernel-info probe timeout")
+    _add_timeout(list_parser, "--probe-timeout", 1.0, "per-kernel probe timeout")
+    _add_timeout(list_parser, "--timeout", 3.0, "overall discovery timeout")
 
     info_parser = commands.add_parser("info", help="return kernel_info for a kernel")
     _add_connection(info_parser)
@@ -194,7 +195,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "list":
             _write_json(
-                discover_kernels(args.runtime_dir, timeout=args.probe_timeout)
+                discover_kernels(
+                    args.runtime_dir,
+                    timeout=args.probe_timeout,
+                    discovery_timeout=args.timeout,
+                )
             )
             return 0
 

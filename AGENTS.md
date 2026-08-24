@@ -12,6 +12,19 @@ Use explicit Jupyter connection files. Preserve these lifecycle semantics:
 - Never delete stale connection files automatically.
 - Keep kernel stdin disabled; interactive `input()` is outside the supported scope.
 
+Discover kernels in layers:
+
+1. Scan connection files and reject malformed or clearly unusable candidates from file metadata.
+2. Rank the remaining candidates by inexpensive signals such as recency; treat these signals as hints, not proof of liveness.
+3. Probe candidate liveness with a short, bounded heartbeat check. Probe concurrently with a fixed concurrency limit and an overall discovery deadline.
+4. Request `kernel_info` only from responsive candidates so agents can choose by language and implementation.
+5. Return every usable candidate found within the deadline, including responsive candidates whose `kernel_info` timed out; do not stop after the first result.
+6. Omit unreachable candidates from normal output. Do not add an exhaustive stale-file reporting mode unless explicitly requested.
+7. Return partial results when the overall deadline expires and mark the discovery result as incomplete.
+8. Distinguish responsive candidates from fully identified candidates; do not infer that a timed-out candidate is stale or delete its file.
+
+Do not use full client readiness waits for bulk discovery. Keep `info` as the complete check for one explicitly selected connection.
+
 ## Routing
 
 | Change | Start here | Verify with |

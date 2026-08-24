@@ -9,6 +9,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from typing import Any
 from jupyter_client.blocking.client import BlockingKernelClient
 from jupyter_client.manager import KernelManager
 from jupyter_core.paths import jupyter_runtime_dir
+from zmq import POLLIN, REQ, Context
 
 from .execution import AgentJupyterError, ConnectionError
 
@@ -29,6 +31,17 @@ class UnsupportedPlatformError(KernelLifecycleError):
 
 
 ClientFactory = Callable[[], Any]
+HeartbeatProbe = Callable[[dict[str, Any], float], bool]
+
+_REQUIRED_CONNECTION_FIELDS = (
+    "transport",
+    "ip",
+    "shell_port",
+    "iopub_port",
+    "stdin_port",
+    "control_port",
+    "hb_port",
+)
 
 
 def connection_files(runtime_dirs: Iterable[str | Path] = ()) -> list[str]:
@@ -77,34 +90,163 @@ def kernel_info(
             client.stop_channels()
 
 
+def _connection_config(connection: str) -> dict[str, Any] | None:
+    """Load enough connection metadata to reject clearly unusable files."""
+    try:
+        value = json.loads(Path(connection).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    if not all(field in value for field in _REQUIRED_CONNECTION_FIELDS):
+        return None
+    if value["transport"] not in {"tcp", "ipc"} or not isinstance(value["ip"], str):
+        return None
+    if not all(
+        isinstance(value[field], int) and value[field] >= 0
+        for field in _REQUIRED_CONNECTION_FIELDS[2:]
+    ):
+        return None
+    return value
+
+
+def _heartbeat_responds(config: dict[str, Any], timeout: float) -> bool:
+    """Perform one strictly bounded Jupyter heartbeat exchange."""
+    transport = config["transport"]
+    endpoint = (
+        f"tcp://{config['ip']}:{config['hb_port']}"
+        if transport == "tcp"
+        else f"{transport}://{config['ip']}-{config['hb_port']}"
+    )
+    socket = Context.instance().socket(REQ)
+    socket.linger = 0
+    try:
+        socket.connect(endpoint)
+        socket.send(b"ping")
+        if not socket.poll(max(0, int(timeout * 1000)), POLLIN):
+            return False
+        return socket.recv() == b"ping"
+    except Exception:
+        return False
+    finally:
+        socket.close()
+
+
+def _kernel_summary(info: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Extract the stable, compact summary exposed by kernel discovery."""
+    summary: dict[str, dict[str, str]] = {}
+
+    language_info = info.get("language_info")
+    if isinstance(language_info, dict):
+        language = {
+            field: language_info[field]
+            for field in ("name", "version")
+            if isinstance(language_info.get(field), str)
+        }
+        if language:
+            summary["language"] = language
+
+    implementation: dict[str, str] = {}
+    if isinstance(info.get("implementation"), str):
+        implementation["name"] = info["implementation"]
+    if isinstance(info.get("implementation_version"), str):
+        implementation["version"] = info["implementation_version"]
+    if implementation:
+        summary["implementation"] = implementation
+
+    return summary
+
+
 def probe_connection(
     connection: str,
     *,
     timeout: float = 2.0,
     client_factory: ClientFactory = BlockingKernelClient,
-) -> dict[str, Any]:
-    """Probe one connection file with the same bounded kernel-info request."""
-    return kernel_info(connection, timeout=timeout, client_factory=client_factory)
+    heartbeat_probe: HeartbeatProbe = _heartbeat_responds,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return a responsive connection, optionally with compact identifying information."""
+    config = config or _connection_config(connection)
+    if config is None or not heartbeat_probe(config, timeout):
+        return None
+
+    entry: dict[str, Any] = {"connection": connection, "status": "responsive"}
+    client = client_factory()
+    try:
+        _start_client(client, connection)
+        msg_id = client.kernel_info()
+        info = _get_kernel_info_reply(client, msg_id, timeout)
+        entry.update(_kernel_summary(info))
+        entry["status"] = "identified"
+    except Exception:
+        return entry
+    finally:
+        with suppress(Exception):
+            client.stop_channels()
+    return entry
 
 
 def discover_kernels(
     runtime_dirs: Iterable[str | Path] = (),
     *,
-    timeout: float = 2.0,
+    timeout: float = 1.0,
+    discovery_timeout: float = 3.0,
+    max_concurrency: int = 8,
     client_factory: ClientFactory = BlockingKernelClient,
-) -> list[dict[str, Any]]:
-    """Find connection files and attach either kernel-info or a probe error."""
-    kernels: list[dict[str, Any]] = []
+    heartbeat_probe: HeartbeatProbe = _heartbeat_responds,
+) -> dict[str, Any]:
+    """Discover usable kernels concurrently within an overall deadline."""
+    candidates: list[tuple[float, str, dict[str, Any]]] = []
     for connection in connection_files(runtime_dirs):
-        entry: dict[str, Any] = {"connection": connection}
+        config = _connection_config(connection)
+        if config is None:
+            continue
         try:
-            entry["kernel_info"] = probe_connection(
-                connection, timeout=timeout, client_factory=client_factory
+            modified = Path(connection).stat().st_mtime
+        except OSError:
+            continue
+        candidates.append((modified, connection, config))
+    candidates.sort(reverse=True)
+
+    if not candidates:
+        return {"kernels": [], "complete": True}
+
+    deadline = time.monotonic() + discovery_timeout
+    executor = ThreadPoolExecutor(max_workers=max(1, max_concurrency))
+    futures: set[Future[dict[str, Any] | None]] = {
+        executor.submit(
+            probe_connection,
+            connection,
+            timeout=min(timeout, max(0.0, deadline - time.monotonic())),
+            client_factory=client_factory,
+            heartbeat_probe=heartbeat_probe,
+            config=config,
+        )
+        for _, connection, config in candidates
+    }
+    kernels: list[dict[str, Any]] = []
+    pending = futures
+    try:
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            done, pending = wait(
+                pending, timeout=remaining, return_when=FIRST_COMPLETED
             )
-        except Exception as exc:
-            entry["error"] = str(exc)
-        kernels.append(entry)
-    return kernels
+            for future in done:
+                with suppress(Exception):
+                    entry = future.result()
+                    if entry is not None:
+                        kernels.append(entry)
+    finally:
+        for future in pending:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    order = {connection: index for index, (_, connection, _) in enumerate(candidates)}
+    kernels.sort(key=lambda entry: order[entry["connection"]])
+    return {"kernels": kernels, "complete": not pending}
 
 
 def interrupt_kernel(
@@ -155,14 +297,20 @@ def start_kernel(
 ) -> str:
     """Start an independent kernel and return its retained connection file."""
     if platform.system() not in {"Linux", "Darwin"}:
-        raise UnsupportedPlatformError("kernel start is supported only on Linux and macOS")
+        raise UnsupportedPlatformError(
+            "kernel start is supported only on Linux and macOS"
+        )
 
-    target_dir = Path(runtime_dir) if runtime_dir is not None else Path(jupyter_runtime_dir())
+    target_dir = (
+        Path(runtime_dir) if runtime_dir is not None else Path(jupyter_runtime_dir())
+    )
     target_dir = target_dir.expanduser()
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise KernelLifecycleError(f"could not create runtime directory: {exc}") from exc
+        raise KernelLifecycleError(
+            f"could not create runtime directory: {exc}"
+        ) from exc
 
     connection = target_dir / f"kernel-{uuid.uuid4().hex}.json"
     manager = manager_factory(kernel_name=kernel_name, connection_file=str(connection))
@@ -194,7 +342,9 @@ def start_kernel(
             manager.shutdown_kernel()
         if isinstance(exc, AgentJupyterError):
             raise
-        raise KernelLifecycleError(f"could not start kernel {kernel_name!r}: {exc}") from exc
+        raise KernelLifecycleError(
+            f"could not start kernel {kernel_name!r}: {exc}"
+        ) from exc
     finally:
         if client is not None:
             with suppress(Exception):
@@ -221,11 +371,15 @@ def _get_kernel_info_reply(client: Any, msg_id: str, timeout: float) -> dict[str
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise ConnectionError(f"kernel_info did not finish within {timeout:g} seconds")
+            raise ConnectionError(
+                f"kernel_info did not finish within {timeout:g} seconds"
+            )
         try:
             message = client.get_shell_msg(timeout=remaining)
         except queue.Empty as exc:
-            raise ConnectionError(f"kernel_info did not finish within {timeout:g} seconds") from exc
+            raise ConnectionError(
+                f"kernel_info did not finish within {timeout:g} seconds"
+            ) from exc
         parent = message.get("parent_header", {})
         if (
             isinstance(parent, dict)
