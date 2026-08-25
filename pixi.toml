@@ -20,6 +20,7 @@ rattler-build = ">=0.74,<0.75"
 
 [feature.build.tasks]
 build-conda = "rm -rf dist/conda && rattler-build build --recipe recipe/recipe.yaml --output-dir dist/conda"
+build-conda-dev = "rm -rf dist/conda && AGENT_JUPYTER_BUILD_STRING=dev_$(date +%y%m%d%H%M) rattler-build build --recipe recipe/recipe.yaml --output-dir dist/conda"
 
 [environments]
 test = { features = ["test"], solve-group = "default" }

@@ -9,6 +9,8 @@ source:
   path: ..
 
 build:
+  number: 0
+  string: ${{ env.get("AGENT_JUPYTER_BUILD_STRING", default="py_" ~ build_number) }}
   noarch: python
   python:
     entry_points:
