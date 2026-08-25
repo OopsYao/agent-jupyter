@@ -22,7 +22,7 @@ from .lifecycle import (
     shutdown_kernel,
     start_kernel,
 )
-from .skill import SkillInstallError, install_skill
+from .skill import SkillInstallError, install_skill, package_skill
 
 
 def _positive_float(value: str) -> float:
@@ -77,6 +77,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="replace an existing agent-jupyter/SKILL.md",
+    )
+
+    package_parser = commands.add_parser(
+        "package-skill", help="package the built-in Agent Skill as a ZIP archive"
+    )
+    package_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="PATH",
+        help="output ZIP path",
+    )
+    package_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing output archive",
     )
 
     list_parser = commands.add_parser("list", help="list runtime connection files")
@@ -191,6 +207,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "install-skill":
             print(install_skill(args.skills_root, force=args.force))
+            return 0
+
+        if args.command == "package-skill":
+            print(package_skill(args.output, force=args.force))
             return 0
 
         if args.command == "list":

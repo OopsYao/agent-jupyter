@@ -44,6 +44,22 @@ agent-jupyter install-skill --skills-root /path/to/skills --force
 
 `--root` 是 `--skills-root` 的别名。命令成功时在 stdout 输出写入的文件路径。
 
+如需将内置 Skill 作为 ZIP 文件分发，可使用独立的 `package-skill` 命令。`--output` 为必填项；目标文件已存在时默认拒绝覆盖，使用 `--force` 可替换：
+
+```bash
+agent-jupyter package-skill --output ./agent-jupyter-skill.zip
+agent-jupyter package-skill --output ./agent-jupyter-skill.zip --force
+```
+
+生成的压缩包包含标准 Skill 目录结构：
+
+```text
+agent-jupyter/
+└── SKILL.md
+```
+
+命令成功时在 stdout 输出生成的 ZIP 路径。
+
 ```bash
 # 扫描标准 runtime directory；可重复提供额外目录
 agent-jupyter list --runtime-dir /extra/runtime

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import zipfile
 from contextlib import suppress
 from importlib.resources import files
 from pathlib import Path
@@ -20,6 +21,50 @@ class SkillInstallError(Exception):
 def skill_text() -> str:
     """Return the packaged Agent Skill document."""
     return files("agent_jupyter").joinpath(_RESOURCE_NAME).read_text(encoding="utf-8")
+
+
+def package_skill(output: str | Path, *, force: bool = False) -> Path:
+    """Write the built-in skill as a distributable ZIP archive."""
+    destination = Path(output).expanduser()
+    if destination.exists() and not force:
+        raise SkillInstallError(
+            f"skill package already exists at {destination}; refusing to overwrite "
+            "(use --force to replace it)"
+        )
+
+    temporary_name: str | None = None
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            delete=False,
+        ) as stream:
+            temporary_name = stream.name
+        with zipfile.ZipFile(temporary_name, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(f"{SKILL_NAME}/SKILL.md", skill_text())
+
+        if force:
+            os.replace(temporary_name, destination)
+        else:
+            os.link(temporary_name, destination)
+            os.unlink(temporary_name)
+        temporary_name = None
+    except FileExistsError as exc:
+        raise SkillInstallError(
+            f"skill package already exists at {destination}; refusing to overwrite "
+            "(use --force to replace it)"
+        ) from exc
+    except OSError as exc:
+        raise SkillInstallError(
+            f"could not package skill at {destination}: {exc}"
+        ) from exc
+    finally:
+        if temporary_name is not None:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary_name)
+
+    return destination
 
 
 def install_skill(
