@@ -64,6 +64,9 @@ pixi run test
 
 No lint, formatter, or static-type command is declared. Do not invent one as a project gate.
 
+Do not test Skill prose with literal substring assertions. Test installation,
+packaging, and executable behavior instead.
+
 After packaging changes, build the conda package and require its recipe tests to pass:
 
 ```bash
