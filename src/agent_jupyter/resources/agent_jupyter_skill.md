@@ -31,17 +31,18 @@ completed. Do not blindly retry code with side effects.
 
 Kernel stdin is disabled, so `input()` is unsupported.
 
-## Select a kernel
+## Require an explicit connection
 
-A connection is known only when a literal, explicit connection-file path
-already appears in the conversation, either from the user or from an earlier
-`agent-jupyter start`. Reuse exactly that path; references such as "the current
-kernel" or "this notebook" do not identify a connection.
+Use an existing kernel only when the user explicitly provides its literal
+connection-file path or an earlier `agent-jupyter start` returned that path.
+Reuse exactly that path; references such as "the current kernel" or "this
+notebook" do not identify a connection. Never use `glob`, `ls`, `find`, or scan
+runtime directories to search for, verify, or guess a connection file.
 
-If no literal path appears in the conversation, do not run any Jupyter command.
-Ask whether the user wants you to create a new kernel. In the same message,
-explain that using an existing kernel requires its exact connection-file path
-and include this snippet for the user to run inside that kernel:
+Without an explicit path, do not run any Jupyter command. Ask whether the user
+wants to provide an existing kernel's exact connection-file path or create a
+new kernel. In the same message, include this snippet for the user to run inside
+an existing kernel:
 
 ```python
 from ipykernel import get_connection_file
@@ -49,8 +50,7 @@ print(get_connection_file())
 ```
 
 Then stop and wait for the user's response. Do not show a kernel-creation
-command while asking. Never search for, infer, or silently select a connection
-path.
+command while asking. Never infer or silently select a connection path.
 
 ## Create a kernel
 

@@ -62,6 +62,14 @@ Run the complete automated suite after source, resource, or test changes:
 pixi run test
 ```
 
+Run the repository behavior-sampling task only when the user explicitly requests it; it incurs model/API cost:
+
+```bash
+pixi run sample-behavior
+```
+
+Analyze `behavior-sampling/report.md` first. Read the generated JSONL only when the report lacks needed detail. A zero exit status means sampling completed, not that the sampled behavior passed.
+
 No lint, formatter, or static-type command is declared. Do not invent one as a project gate.
 
 Do not test Skill prose with literal substring assertions. Test installation,

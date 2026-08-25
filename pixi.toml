@@ -28,3 +28,4 @@ build = { features = ["build"], solve-group = "build", no-default-feature = true
 
 [tasks]
 test = "pytest"
+sample-behavior = "python scripts/sample_behavior.py"
