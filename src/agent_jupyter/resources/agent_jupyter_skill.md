@@ -1,98 +1,87 @@
 ---
 name: agent-jupyter
-description: Use the agent-jupyter CLI to discover, inspect, execute, interrupt, and shut down Jupyter kernels while preserving kernel state between calls.
+description: Use the agent-jupyter CLI to execute, interrupt, and shut down Jupyter kernels while preserving kernel state between calls.
 ---
 
 # agent-jupyter
 
-Use this skill when you need to work with an existing Jupyter kernel through the
-`agent-jupyter` CLI. The CLI process is short-lived; the kernel and its state
-are not. Prefer machine-readable JSON and explicit connection files so that
-commands are deterministic.
+Use this skill to work with a Jupyter kernel while keeping its state between
+short-lived CLI calls. The kernel outlives the CLI process. Use an explicit
+connection-file path for deterministic, machine-friendly operations.
 
-## Core workflow
+## Workflow
 
-1. Discover kernels when you do not already have a connection file:
+### 1. Reuse a connection that is already known
 
-   ```bash
-   agent-jupyter list
-   agent-jupyter list --runtime-dir /path/to/extra/runtime
-   ```
+First check whether the conversation or the current command context already
+contains a specific, trustworthy Jupyter connection-file path. If it does,
+reuse that exact path for subsequent `exec` calls. Do not rediscover a kernel
+or ask for the path again.
 
-   `list` returns responsive kernels, omits unreachable connection files, and
-   never deletes them. Identified entries include compact `language` and
-   `implementation` summaries when those string values are available; raw
-   `kernel_info` is not included. A responsive entry can lack those summaries
-   when identification times out. Use `info` on an explicit connection when
-   the complete raw `kernel_info` response is needed. If `complete` is false,
-   the discovery deadline produced partial
-   results; rerun with a larger `--timeout` when a complete inventory is needed.
+### 2. Obtain a path when none is known
 
-2. Inspect a selected kernel before using it:
+If no path is present but the user intends to use an existing kernel, guide
+them to obtain the connection file from that specifically intended kernel and
+provide its path. A Python/IPython kernel can print it with:
 
-   ```bash
-   agent-jupyter info --connection /path/to/kernel.json
-   ```
-
-3. For a new independent kernel, start it and retain the returned connection
-   path. JSON is preferable when capturing the path programmatically:
-
-   ```bash
-   agent-jupyter start --kernel-name python3 --json
-   ```
-
-4. Execute against that same connection file for every related call. This
-   reuses variables, imports, files, and other state held by the kernel:
-
-   ```bash
-   agent-jupyter exec --connection /path/to/kernel.json --json -c 'answer = 40 + 2; answer'
-   ```
-
-   For multiline code, use a quoted heredoc rather than trying to put shell
-   quoting around a large string:
-
-   ```bash
-   agent-jupyter exec --connection /path/to/kernel.json --json <<'PY'
-   import statistics
-   values = [1, 2, 3]
-   mean = statistics.mean(values)
-   print(mean)
-   PY
-   ```
-
-## Execution rules
-
-- Always pass `--connection` (the `--connection-file` alias is also accepted)
-  for `info`, `exec`, `interrupt`, and `shutdown`. Do not rely on an implicit
-  “current” or “most recent” kernel.
-- Use `--json` when another tool or agent needs to parse a result. Human mode
-  is useful for quick inspection, but JSON is the stable interface.
-- `input()` and other kernel stdin requests are not supported: execution uses
-  `allow_stdin=False`. Arrange all inputs in the code or pass data another
-  way; do not wait for an interactive prompt.
-- An execution timeout only disconnects the current CLI client. It does **not**
-  stop, interrupt, or shut down the kernel, and the submitted code may still
-  be running. Use `interrupt` deliberately when stopping execution is intended,
-  then reconnect and inspect the result.
-- A successful or failed `exec`, a CLI exit, and a CLI timeout all leave the
-  kernel running. Kernel state can therefore be reused by subsequent `exec`
-  calls with the same connection file.
-
-## Lifecycle commands
-
-Interrupt only when you explicitly intend to stop currently running code:
-
-```bash
-agent-jupyter interrupt --connection /path/to/kernel.json
+```python
+from IPython import get_connection_file
+print(get_connection_file())
 ```
 
-Use `shutdown` sparingly. It terminates the entire kernel and can disrupt other
-clients such as JupyterLab or VS Code; confirm that the kernel is exclusively
-owned before running:
+Do not infer or select the intended kernel from runtime-file inventories,
+recency, metadata, summaries, or liveness checks. A connection path must come
+from the intended existing kernel or from the start command below.
+
+If the user wants a new independent kernel instead, start one and retain the
+connection path returned by the command:
 
 ```bash
-agent-jupyter shutdown --connection /path/to/kernel.json
+agent-jupyter start --kernel-name python3 --json
 ```
 
-Neither command implicitly cleans up connection files. Treat connection files
-as sensitive because they contain authentication keys.
+### 3. Execute against the same kernel
+
+Use the retained explicit path for every related call so variables, imports,
+files, and other state remain available:
+
+```bash
+agent-jupyter exec --connection /path/to/kernel.json --json -c 'answer = 40 + 2; answer'
+```
+
+For multiline code, use a quoted heredoc:
+
+```bash
+agent-jupyter exec --connection /path/to/kernel.json --json <<'PY'
+import statistics
+values = [1, 2, 3]
+mean = statistics.mean(values)
+print(mean)
+PY
+```
+
+## Commands and safeguards
+
+- Pass `--connection` (or its `--connection-file` alias) explicitly to
+  `exec`, `interrupt`, `shutdown`, and `info`. Never rely on an implicit
+  current or most-recent kernel.
+- `info` is not part of the normal execution loop. Use it only as an
+  exception-diagnostic tool after a connection or execution problem when
+  kernel details are needed. Diagnostics must never silently select or switch
+  to another kernel; continue using the explicit path or report the problem.
+- Prefer `--json` when another tool or agent will parse output. Human-readable
+  mode is suitable for quick inspection.
+- Kernel stdin is disabled (`allow_stdin=False`). `input()` and other
+  interactive stdin requests are unsupported; provide inputs in code or by
+  another non-interactive mechanism.
+- An execution timeout disconnects only the CLI client. It does not interrupt
+  or shut down the kernel, and submitted code may still be running. Use
+  `interrupt` explicitly when stopping execution is intended, then reconnect
+  with the same connection file to inspect the result.
+- Normal CLI exit, successful or failed execution, and timeout leave the
+  kernel running. Only explicit `interrupt` and `shutdown` alter execution or
+  kernel lifecycle. Use `shutdown` sparingly because it terminates the kernel
+  for other clients too; confirm exclusive ownership first.
+- Neither `interrupt` nor `shutdown` implicitly deletes connection files.
+  Treat connection files as sensitive credentials because they contain
+  authentication keys, and never print or expose their contents.

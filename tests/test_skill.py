@@ -61,6 +61,33 @@ def test_install_skill_writes_packaged_document(tmp_path: Path) -> None:
     assert "agent-jupyter exec" in destination.read_text(encoding="utf-8")
 
 
+def test_skill_defines_connection_file_workflow() -> None:
+    document = " ".join(skill_text().split())
+
+    assert "reuse that exact path" in document
+    assert "get_connection_file" in document
+    assert "agent-jupyter start" in document
+    assert "retain the connection path returned" in document
+
+
+def test_skill_requires_explicit_kernel_identity() -> None:
+    document = " ".join(skill_text().split())
+
+    assert "runtime-file inventories" in document
+    assert "agent-jupyter list" not in document
+    assert "must never silently select or switch" in document
+
+
+def test_skill_separates_execution_from_diagnostics() -> None:
+    document = " ".join(skill_text().split())
+
+    assert "agent-jupyter exec --connection" in document
+    assert "--json -c" in document
+    assert "<<'PY'" in document
+    assert "`info` is not part of the normal execution loop" in document
+    assert "after a connection or execution problem" in document
+
+
 def test_install_skill_refuses_to_overwrite_by_default(tmp_path: Path) -> None:
     destination = install_skill(tmp_path)
     original = destination.read_text(encoding="utf-8")
