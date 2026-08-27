@@ -71,7 +71,7 @@ Run the repository behavior-sampling task only when the user explicitly requests
 pixi run sample-behavior
 ```
 
-Analyze `behavior-sampling/report.md` first. Evaluate the complete tool-attempt trace, not only the final reply: a model that runs a discovery command before reading the Skill is noncompliant even if its final response corrects course. Read the generated JSONL only when the report lacks needed detail. A zero exit status means sampling completed, not that the sampled behavior passed. The sampling gate blocks bash execution, so treat retries after an expected `exec` or `start` attempt as gate-induced behavior rather than evidence that the initial operation was wrong.
+Analyze `behavior-sampling/report.md` first. Judge Skill induction from the first substantive intent before the sampling gate intervenes: a discovery attempt before reading the Skill is noncompliant even if the final response corrects course. Use the complete trace to find earlier attempts, but treat activity after the first gate block as audit evidence only. Read the generated JSONL only when the report lacks needed detail. Exit status `0` means every sampling run completed; a nonzero status means at least one run failed, timed out, or could not start. Exit status never indicates whether sampled behavior passed.
 
 No lint, formatter, or static-type command is declared. Do not invent one as a project gate.
 

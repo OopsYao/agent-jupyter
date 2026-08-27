@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 _SAMPLE_BEHAVIOR_PATH = (
@@ -108,6 +109,7 @@ def test_report_keeps_full_attempts_and_final_reply(tmp_path: Path) -> None:
         "label": "sample",
         "scenario": "abstract-kernel",
         "raw_stream": "sample-abstract-kernel.jsonl",
+        "run_status": "completed",
         "tool_attempts": [
             {
                 "tool_call_id": "call-1",
@@ -133,6 +135,10 @@ def test_report_keeps_full_attempts_and_final_reply(tmp_path: Path) -> None:
     assert '"status": "blocked"' in report
     assert "preserved final reply" in report
     assert "raw_stream" in report
+    assert "Completed: 1" in report
+    assert "exit status describes sampling completeness" in report
+    assert "Attempts through the first gate block" in report
+    assert "Attempts after the first gate block" in report
 
 
 def test_run_wires_only_the_explicit_gate_with_read_and_bash(
@@ -170,3 +176,45 @@ def test_run_wires_only_the_explicit_gate_with_read_and_bash(
     assert command.count("--extension") == 1
     assert command.count("--skill") == 1
     assert command[-1] == "请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。"
+
+
+def test_run_marks_nonzero_pi_exit_as_failed(tmp_path: Path, monkeypatch) -> None:
+    class Completed:
+        stdout = ""
+        stderr = "provider failed"
+        returncode = 1
+
+    monkeypatch.setattr(sample_behavior.subprocess, "run", lambda *args, **kwargs: Completed())
+
+    result = sample_behavior._run(
+        tmp_path,
+        "sample",
+        "provider/model",
+        "off",
+        "explicit-connection",
+        "prompt",
+    )
+
+    assert result["run_status"] == "failed"
+    assert result["returncode"] == 1
+
+
+def test_main_exit_code_describes_sampling_completeness(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(sample_behavior, "RUNS", (("sample", "model", "off"),))
+    monkeypatch.setattr(sample_behavior, "SCENARIOS", (("scenario", "prompt"),))
+    monkeypatch.setattr(sys, "argv", ["sample_behavior", "--output", str(tmp_path)])
+    monkeypatch.setattr(
+        sample_behavior,
+        "_run",
+        lambda *args, **kwargs: {
+            "label": "sample",
+            "scenario": "scenario",
+            "run_status": "timed_out",
+            "tool_attempts": [],
+            "final_assistant_reply": "",
+        },
+    )
+
+    assert sample_behavior.main() == 1
