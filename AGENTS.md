@@ -4,7 +4,9 @@
 
 `agent-jupyter` is a short-lived CLI for discovering and controlling Jupyter kernels. Keep computation state in the kernel; do not add a CLI session registry, database, or implicit “current kernel.”
 
-Use explicit Jupyter connection files. Preserve these lifecycle semantics:
+Use explicit Jupyter connection files. Treat the CLI and the agent-facing Skill as separate interfaces: the CLI exposes kernel discovery, but the Skill workflow operates only on a literal connection-file path supplied by the user or returned by an explicitly requested `agent-jupyter start`. The Skill description must trigger on the user's Jupyter execution or lifecycle intent even when no connection details are provided; keep connection discovery restrictions in the Skill body.
+
+Preserve these lifecycle semantics:
 
 - Normal CLI exit, successful execution, execution failure, and timeout leave the kernel running.
 - Execution timeout disconnects the client; it does not imply interrupt or shutdown.
@@ -34,6 +36,7 @@ Do not use full client readiness waits for bulk discovery. Keep `info` as the co
 | Kernel discovery, info, start, interrupt, shutdown | `src/agent_jupyter/lifecycle.py` | `tests/test_lifecycle.py` |
 | Skill installation and overwrite behavior | `src/agent_jupyter/skill.py` | `tests/test_skill.py` |
 | Agent-facing workflow instructions | `src/agent_jupyter/resources/agent_jupyter_skill.md` | `tests/test_skill.py` and the corresponding CLI help |
+| Skill behavior-sampling scenarios, tool-attempt capture, report generation | `scripts/sample_behavior.py`, `scripts/sample_gate.ts` | `tests/test_sample_behavior.py`; run `pixi run sample-behavior` only when explicitly requested |
 | Python metadata, entry point, packaged resources | `pyproject.toml` | build the wheel or conda package and inspect/import the installed resource |
 | Pixi environments and tasks | `pixi.toml` | run the affected Pixi environment/task |
 | Conda package contents and smoke tests | `recipe/recipe.yaml` | `pixi run -e build build-conda` |
@@ -68,7 +71,7 @@ Run the repository behavior-sampling task only when the user explicitly requests
 pixi run sample-behavior
 ```
 
-Analyze `behavior-sampling/report.md` first. Read the generated JSONL only when the report lacks needed detail. A zero exit status means sampling completed, not that the sampled behavior passed.
+Analyze `behavior-sampling/report.md` first. Evaluate the complete tool-attempt trace, not only the final reply: a model that runs a discovery command before reading the Skill is noncompliant even if its final response corrects course. Read the generated JSONL only when the report lacks needed detail. A zero exit status means sampling completed, not that the sampled behavior passed. The sampling gate blocks bash execution, so treat retries after an expected `exec` or `start` attempt as gate-induced behavior rather than evidence that the initial operation was wrong.
 
 No lint, formatter, or static-type command is declared. Do not invent one as a project gate.
 

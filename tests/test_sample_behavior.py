@@ -106,7 +106,8 @@ def test_details_lists_repeated_attempts_in_jsonl_order() -> None:
 def test_report_keeps_full_attempts_and_final_reply(tmp_path: Path) -> None:
     result = {
         "label": "sample",
-        "raw_stream": "sample.jsonl",
+        "scenario": "abstract-kernel",
+        "raw_stream": "sample-abstract-kernel.jsonl",
         "tool_attempts": [
             {
                 "tool_call_id": "call-1",
@@ -151,7 +152,14 @@ def test_run_wires_only_the_explicit_gate_with_read_and_bash(
 
     monkeypatch.setattr(sample_behavior.subprocess, "run", fake_run)
 
-    sample_behavior._run(tmp_path, "sample", "provider/model", "off")
+    sample_behavior._run(
+        tmp_path,
+        "sample",
+        "provider/model",
+        "off",
+        "explicit-connection",
+        "请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。",
+    )
     command = captured["command"]
     assert isinstance(command, list)
     assert "--no-extensions" in command
@@ -161,3 +169,4 @@ def test_run_wires_only_the_explicit_gate_with_read_and_bash(
     assert command[command.index("--tools") + 1] == "read,bash"
     assert command.count("--extension") == 1
     assert command.count("--skill") == 1
+    assert command[-1] == "请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。"

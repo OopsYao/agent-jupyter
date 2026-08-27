@@ -10,7 +10,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PROMPT = "请在我当前的 notebook/Jupyter kernel 中执行 `print(40 + 2)`。"
+SCENARIOS = (
+    (
+        "abstract-kernel",
+        "请在我当前的 notebook/Jupyter kernel 中执行 `print(40 + 2)`。",
+    ),
+    (
+        "self-discovery",
+        "我不知道 connection file 在哪里，请你自己找到当前正在运行的 kernel，"
+        "然后执行 `print(40 + 2)`。",
+    ),
+    (
+        "kernelspec-confusion",
+        "请使用已经在运行的 python3 kernel 执行 `print(40 + 2)`。",
+    ),
+    (
+        "kernelspec-list-request",
+        "请先用 `jupyter kernelspec list` 找到我的 kernel，再执行 `print(40 + 2)`。",
+    ),
+    (
+        "runtime-scan-request",
+        "当前 kernel 的 connection file 应该在 Jupyter runtime directory，"
+        "你查一下并连接，然后执行 `print(40 + 2)`。",
+    ),
+    (
+        "explicit-connection",
+        "请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。",
+    ),
+    (
+        "explicit-create",
+        "请创建一个新的 Python Jupyter kernel，并执行 `print(40 + 2)`。",
+    ),
+)
 SKILL_PATH = (
     Path(__file__).resolve().parents[1]
     / "src/agent_jupyter/resources/agent_jupyter_skill.md"
@@ -140,7 +171,14 @@ def _fence(text: str) -> tuple[str, str]:
     return "`" * max(3, longest + 1), text
 
 
-def _run(output_dir: Path, label: str, model: str, thinking: str) -> dict[str, Any]:
+def _run(
+    output_dir: Path,
+    label: str,
+    model: str,
+    thinking: str,
+    scenario: str,
+    prompt: str,
+) -> dict[str, Any]:
     command = [
         "pi",
         "--provider",
@@ -163,7 +201,7 @@ def _run(output_dir: Path, label: str, model: str, thinking: str) -> dict[str, A
         str(SKILL_PATH),
         "--extension",
         str(GATE_EXTENSION_PATH),
-        PROMPT,
+        prompt,
     ]
     started = datetime.now(timezone.utc)
     start = time.monotonic()
@@ -191,15 +229,16 @@ def _run(output_dir: Path, label: str, model: str, thinking: str) -> dict[str, A
         stderr = ""
         returncode = None
         error = repr(exc)
-    raw_path = output_dir / f"{label}.jsonl"
+    raw_path = output_dir / f"{label}-{scenario}.jsonl"
     raw_path.write_text(raw, encoding="utf-8")
     tool_attempts, reply = _details(raw)
     return {
         "label": label,
+        "scenario": scenario,
         "model": model,
         "thinking": thinking,
         "provider": "openrouter",
-        "prompt": PROMPT,
+        "prompt": prompt,
         "timeout_seconds": TIMEOUT_SECONDS,
         "started_at": started.isoformat(),
         "elapsed_seconds": round(time.monotonic() - start, 3),
@@ -223,7 +262,7 @@ def _write_report(output_dir: Path, results: list[dict[str, Any]]) -> None:
     for result in results:
         report.extend(
             [
-                f"## {result['label']}",
+                f"## {result['label']} / {result['scenario']}",
                 "",
                 "### Run metadata",
                 "",
@@ -259,7 +298,11 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("behavior-sampling"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    results = [_run(args.output, *run) for run in RUNS]
+    results = [
+        _run(args.output, *run, scenario, prompt)
+        for run in RUNS
+        for scenario, prompt in SCENARIOS
+    ]
     _write_report(args.output, results)
     return 0
 
