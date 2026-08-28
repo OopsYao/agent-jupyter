@@ -55,6 +55,7 @@ RUNS = (
 )
 GATE_EXTENSION_PATH = Path(__file__).resolve().with_name("sample_gate.ts")
 BLOCKED_REASON_PREFIX = "Behavior sampler gate blocked:"
+GATE_AUDIT_PREFIX = "AGENT_JUPYTER_SAMPLE_GATE:"
 
 
 def _as_text(value: str | bytes | None) -> str:
@@ -97,12 +98,33 @@ def _tool_status(event: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _details(lines: str) -> tuple[list[dict[str, Any]], str]:
+def _gate_blocks(stderr: str) -> dict[str, str]:
+    blocks: dict[str, str] = {}
+    for line in stderr.splitlines():
+        if not line.startswith(GATE_AUDIT_PREFIX):
+            continue
+        try:
+            record = json.loads(line.removeprefix(GATE_AUDIT_PREFIX))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        tool_call_id = record.get("toolCallId")
+        reason = record.get("reason")
+        if isinstance(tool_call_id, str) and isinstance(reason, str):
+            blocks[tool_call_id] = reason
+    return blocks
+
+
+def _details(
+    lines: str, gate_blocks: dict[str, str] | None = None
+) -> tuple[list[dict[str, Any]], str]:
     """Parse tool lifecycle events and the last assistant reply from JSONL.
 
     Tool starts define attempt order. End events only update the matching attempt;
     no attempt is removed or collapsed when the same tool is called repeatedly.
     """
+    gate_blocks = gate_blocks or {}
     tool_attempts: list[dict[str, Any]] = []
     attempts_by_id: dict[str, dict[str, Any]] = {}
     assistant_replies: list[str] = []
@@ -156,6 +178,13 @@ def _details(lines: str) -> tuple[list[dict[str, Any]], str]:
             text = _text_content(event.get("content"))
             if text:
                 assistant_replies.append(text)
+
+    for tool_call_id, reason in gate_blocks.items():
+        blocked_attempt = attempts_by_id.get(tool_call_id)
+        if blocked_attempt is not None:
+            blocked_attempt["status"] = "blocked"
+            blocked_attempt["blocked_reason"] = reason
+
     return tool_attempts, assistant_replies[-1] if assistant_replies else ""
 
 
@@ -231,7 +260,7 @@ def _run(
         error = repr(exc)
     raw_path = output_dir / f"{label}-{scenario}.jsonl"
     raw_path.write_text(raw, encoding="utf-8")
-    tool_attempts, reply = _details(raw)
+    tool_attempts, reply = _details(raw, _gate_blocks(stderr))
     if timed_out:
         run_status = "timed_out"
     elif error:

@@ -23,14 +23,7 @@ def _event(event_type: str, **fields: object) -> str:
 
 def test_details_lists_repeated_attempts_in_jsonl_order() -> None:
     blocked_result = {
-        "content": [
-            {
-                "type": "text",
-                "text": (
-                    f"{sample_behavior.BLOCKED_REASON_PREFIX} bash is disabled"
-                ),
-            }
-        ]
+        "content": [{"type": "text", "text": "Operation aborted"}]
     }
     raw = "\n".join(
         [
@@ -84,7 +77,9 @@ def test_details_lists_repeated_attempts_in_jsonl_order() -> None:
         ]
     )
 
-    attempts, reply = sample_behavior._details(raw)
+    attempts, reply = sample_behavior._details(
+        raw, {"bash-1": "bash is disabled"}
+    )
 
     assert [attempt["tool_name"] for attempt in attempts] == [
         "read",
@@ -101,7 +96,23 @@ def test_details_lists_repeated_attempts_in_jsonl_order() -> None:
         "limit": 10,
     }
     assert attempts[1]["arguments"] == {"command": "pwd", "timeout": 3}
+    assert attempts[1]["blocked_reason"] == "bash is disabled"
     assert reply == "final reply"
+
+
+def test_gate_blocks_parses_only_valid_audit_records() -> None:
+    stderr = "\n".join(
+        [
+            "provider warning",
+            sample_behavior.GATE_AUDIT_PREFIX + "not-json",
+            sample_behavior.GATE_AUDIT_PREFIX
+            + json.dumps({"toolCallId": "bash-1", "reason": "blocked"}),
+            sample_behavior.GATE_AUDIT_PREFIX
+            + json.dumps({"toolCallId": 2, "reason": "ignored"}),
+        ]
+    )
+
+    assert sample_behavior._gate_blocks(stderr) == {"bash-1": "blocked"}
 
 
 def test_report_keeps_full_attempts_and_final_reply(tmp_path: Path) -> None:
