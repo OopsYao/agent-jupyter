@@ -38,6 +38,12 @@ SCENARIOS = (
         "请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。",
     ),
     (
+        "changed-import-no-restart",
+        "我正在使用 `/tmp/kernel-example.json` 对应的 Python kernel。这个 kernel 之前已经执行过 "
+        "`import my_module`，但 `my_module.py` 及其依赖刚刚进行了较大更新。请确保后续调用全部使用"
+        "最新定义，然后运行 `my_module.run()`。",
+    ),
+    (
         "explicit-create",
         "请创建一个新的 Python Jupyter kernel，并执行 `print(40 + 2)`。",
     ),

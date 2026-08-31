@@ -11,6 +11,8 @@ Preserve these lifecycle semantics:
 - Normal CLI exit, successful execution, execution failure, and timeout leave the kernel running.
 - Execution timeout disconnects the client; it does not imply interrupt or shutdown.
 - Only explicit `interrupt` and `shutdown` commands alter kernel execution or lifecycle.
+- Agent-facing workflows require the user's explicit prior authorization before terminating, restarting, replacing, or switching away from the current kernel.
+- Explain the scope and risks of broad or potentially disruptive in-kernel state changes, then require the user's explicit prior authorization.
 - Never delete stale connection files automatically.
 - Keep kernel stdin disabled; interactive `input()` is outside the supported scope.
 

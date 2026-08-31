@@ -91,7 +91,7 @@ agent-jupyter info --connection /path/to/kernel.json --json
 
 Diagnostics must not discover, select, or create another connection.
 
-Interrupt only when stopping execution is intended:
+Interrupt only after the user explicitly authorizes stopping execution:
 
 ```bash
 agent-jupyter interrupt --connection /path/to/kernel.json --json
@@ -103,8 +103,13 @@ Shutdown affects every client and discards kernel state:
 agent-jupyter shutdown --connection /path/to/kernel.json --json
 ```
 
-Use it only when termination is explicitly intended and shared ownership has
-been considered.
+Never terminate, restart, replace, or switch away from the current kernel
+without the user's explicit prior authorization. This applies regardless of the
+reason, including failures, timeouts, connection problems, stale imports,
+dependency changes, or inconsistent state. Explain the state loss and impact on
+other clients, then stop and wait for authorization. Do not treat authorization
+to execute code, diagnose a problem, or interrupt work as authorization to
+restart or replace the kernel.
 
 ## Safety model
 
@@ -120,7 +125,13 @@ The connection file grants access to a persistent, potentially shared REPL.
   namespace or exclusive ownership.
 - Prefer scoped names and idempotent operations. Avoid unnecessary global-state
   changes, name collisions, namespace clearing, interrupts, and shutdowns.
-- Explain destructive or surprising actions before running them.
+- Before broad or potentially disruptive in-kernel state changes—such as
+  clearing namespaces, removing entries from `sys.modules`, enabling global
+  autoreload behavior, or reloading a dependency graph—explain their scope and
+  risks, then stop and wait for the user's explicit authorization. Such actions
+  are acceptable after authorization; their availability never authorizes a
+  kernel restart or replacement.
+- Explain other destructive or surprising actions before running them.
 - Kernel stdin is disabled, so `input()` is unsupported.
 
 Normal CLI exit, execution failure, and timeout leave the kernel running. A
