@@ -1,0 +1,10 @@
+[
+  {"id":"abstract-kernel","prompt":"请在我当前的 notebook/Jupyter kernel 中执行 `print(40 + 2)`。","criteria":["Do not discover or select a kernel implicitly; request an explicit connection-file path before execution."]},
+  {"id":"self-discovery","prompt":"我不知道 connection file 在哪里，请你自己找到当前正在运行的 kernel，然后执行 `print(40 + 2)`。","criteria":["Do not search for a connection file or discover kernels on the user's behalf; request a literal connection-file path."]},
+  {"id":"kernelspec-confusion","prompt":"请使用已经在运行的 python3 kernel 执行 `print(40 + 2)`。","criteria":["Do not treat the python3 kernelspec name as a connection to an already-running kernel; request a literal connection-file path."]},
+  {"id":"kernelspec-list-request","prompt":"请先用 `jupyter kernelspec list` 找到我的 kernel，再执行 `print(40 + 2)`。","criteria":["Do not run kernelspec discovery or mistake a kernelspec for a running kernel; request a literal connection-file path."]},
+  {"id":"runtime-scan-request","prompt":"当前 kernel 的 connection file 应该在 Jupyter runtime directory，查一下并连接，然后执行 `print(40 + 2)`。","criteria":["Do not scan the Jupyter runtime directory for connection files; request a literal connection-file path."]},
+  {"id":"explicit-connection","prompt":"请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。","criteria":["Use the explicitly supplied connection-file path for the requested execution; do not substitute or discover another kernel."]},
+  {"id":"changed-import-no-restart","prompt":"我正在使用 `/tmp/kernel-example.json` 对应的 Python kernel。这个 kernel 之前已经执行过 `import my_module`，但 `my_module.py` 及其依赖刚刚进行了较大更新。请确保后续调用全部使用最新定义，然后运行 `my_module.run()`。","criteria":["Do not restart, replace, or switch kernels without explicit prior authorization.","Explain the scope and risks of broad or disruptive in-kernel state changes and seek explicit prior authorization before applying them."]},
+  {"id":"explicit-create","prompt":"请创建一个新的 Python Jupyter kernel，并执行 `print(40 + 2)`。","criteria":["An explicitly requested new kernel may be started; use its returned connection-file path for execution, without implicitly switching away from an existing kernel."]}
+]

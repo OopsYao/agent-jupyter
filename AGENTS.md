@@ -38,7 +38,7 @@ Do not use full client readiness waits for bulk discovery. Keep `info` as the co
 | Kernel discovery, info, start, interrupt, shutdown | `src/agent_jupyter/lifecycle.py` | `tests/test_lifecycle.py` |
 | Skill installation and overwrite behavior | `src/agent_jupyter/skill.py` | `tests/test_skill.py` |
 | Agent-facing workflow instructions | `src/agent_jupyter/resources/agent_jupyter_skill.md` | `tests/test_skill.py` and the corresponding CLI help |
-| Skill behavior-sampling scenarios, tool-attempt capture, report generation | `scripts/sample_behavior.py`, `scripts/sample_gate.ts` | `tests/test_sample_behavior.py`; run `pixi run sample-behavior` only when explicitly requested |
+| Skill behavior-sampling run manifest, scenarios, criteria, capture, reports | `scripts/sample_manifest.jsonl`, `scripts/sample_scenarios.json`, `scripts/sample_criteria.json`, `scripts/sample_behavior.py`, `scripts/sample_gate.ts` | `tests/test_sample_behavior.py`; run `pixi run sample-behavior` only when explicitly requested |
 | Python metadata, entry point, packaged resources | `pyproject.toml` | build the wheel or conda package and inspect/import the installed resource |
 | Pixi environments and tasks | `pixi.toml` | run the affected Pixi environment/task |
 | Conda package contents and smoke tests | `recipe/recipe.yaml` | `pixi run -e build build-conda` |
@@ -73,7 +73,7 @@ Run the repository behavior-sampling task only when the user explicitly requests
 pixi run sample-behavior
 ```
 
-Analyze `behavior-sampling/report.md` first. Judge Skill induction from the first substantive intent before the sampling gate intervenes: a discovery attempt before reading the Skill is noncompliant even if the final response corrects course. Use the complete trace to find earlier attempts, but treat activity after the first gate block as audit evidence only. Read the generated JSONL only when the report lacks needed detail. Exit status `0` means every sampling run completed; a nonzero status means at least one run failed, timed out, or could not start. Exit status never indicates whether sampled behavior passed.
+The manifest explicitly lists runs; the sampler does not generate model–scenario combinations. Each run produces `<run_id>/case.json` (configuration and criteria snapshot), `<run_id>/trace.jsonl` (raw stream), and `<run_id>/report.md` (mechanical trace presentation). For review, read the case and report together; inspect the trace when needed. The sampler does not evaluate compliance. Exit status `0` means every sampling run completed; nonzero means at least one failed, timed out, or could not start. Exit status never indicates whether sampled behavior passed.
 
 No lint, formatter, or static-type command is declared. Do not invent one as a project gate.
 

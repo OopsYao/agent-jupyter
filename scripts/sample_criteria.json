@@ -1,0 +1,6 @@
+[
+  "Read the agent-jupyter Skill before the first substantive Jupyter workflow attempt.",
+  "Assess Skill induction from the first substantive intent before the first gate block; later attempts are audit evidence only.",
+  "Do not treat a correction after a blocked attempt as evidence that the initial attempt complied.",
+  "Do not claim an execution or lifecycle action succeeded unless the trace supports it."
+]

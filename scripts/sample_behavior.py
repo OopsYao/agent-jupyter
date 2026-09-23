@@ -1,91 +1,100 @@
-"""Sample agent-jupyter Skill behavior with four explicit pi runs."""
+"""Sample agent-jupyter Skill behavior using explicit manifest rows."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCENARIOS = (
-    (
-        "abstract-kernel",
-        "请在我当前的 notebook/Jupyter kernel 中执行 `print(40 + 2)`。",
-    ),
-    (
-        "self-discovery",
-        "我不知道 connection file 在哪里，请你自己找到当前正在运行的 kernel，"
-        "然后执行 `print(40 + 2)`。",
-    ),
-    (
-        "kernelspec-confusion",
-        "请使用已经在运行的 python3 kernel 执行 `print(40 + 2)`。",
-    ),
-    (
-        "kernelspec-list-request",
-        "请先用 `jupyter kernelspec list` 找到我的 kernel，再执行 `print(40 + 2)`。",
-    ),
-    (
-        "runtime-scan-request",
-        "当前 kernel 的 connection file 应该在 Jupyter runtime directory，"
-        "你查一下并连接，然后执行 `print(40 + 2)`。",
-    ),
-    (
-        "explicit-connection",
-        "请通过 `/tmp/kernel-example.json` 执行 `print(40 + 2)`。",
-    ),
-    (
-        "changed-import-no-restart",
-        "我正在使用 `/tmp/kernel-example.json` 对应的 Python kernel。这个 kernel 之前已经执行过 "
-        "`import my_module`，但 `my_module.py` 及其依赖刚刚进行了较大更新。请确保后续调用全部使用"
-        "最新定义，然后运行 `my_module.run()`。",
-    ),
-    (
-        "explicit-create",
-        "请创建一个新的 Python Jupyter kernel，并执行 `print(40 + 2)`。",
-    ),
-)
-SKILL_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "src/agent_jupyter/resources/agent_jupyter_skill.md"
-)
+ROOT = Path(__file__).resolve().parents[1]
+SKILL_PATH = ROOT / "src/agent_jupyter/resources/agent_jupyter_skill.md"
 TIMEOUT_SECONDS = 120
-MANIFEST_PATH = Path(__file__).resolve().with_name("sample_manifest.jsonl")
-GATE_EXTENSION_PATH = Path(__file__).resolve().with_name("sample_gate.ts")
+MANIFEST_PATH = Path(__file__).with_name("sample_manifest.jsonl")
+SCENARIOS_PATH = Path(__file__).with_name("sample_scenarios.json")
+CRITERIA_PATH = Path(__file__).with_name("sample_criteria.json")
+GATE_EXTENSION_PATH = Path(__file__).with_name("sample_gate.ts")
 BLOCKED_REASON_PREFIX = "Behavior sampler gate blocked:"
 GATE_AUDIT_PREFIX = "AGENT_JUPYTER_SAMPLE_GATE:"
 
 
-def _load_runs(path: Path = MANIFEST_PATH) -> tuple[tuple[str, str, str, str], ...]:
-    runs = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+def _load_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid sampling config {path}: {exc}") from exc
+
+
+def _load_scenarios(path: Path = SCENARIOS_PATH) -> dict[str, dict[str, Any]]:
+    value = _load_json(path)
+    if not isinstance(value, list):
+        raise ValueError("Scenario config must be a list")
+    scenarios = {}
+    for entry in value:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("id"), str)
+            or not isinstance(entry.get("prompt"), str)
+        ):
+            raise ValueError("Each scenario requires string id and prompt")
+        if entry["id"] in scenarios:
+            raise ValueError(f"Duplicate scenario id: {entry['id']}")
+        scenarios[entry["id"]] = entry
+    return scenarios
+
+
+def _load_criteria(path: Path = CRITERIA_PATH) -> list[Any]:
+    value = _load_json(path)
+    if not isinstance(value, list):
+        raise ValueError("Common criteria config must be a list")
+    return value
+
+
+def _load_runs(path: Path = MANIFEST_PATH) -> tuple[dict[str, Any], ...]:
+    runs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip():
             continue
         try:
             entry = json.loads(line)
-            runs.append(
-                (
-                    entry["label"],
-                    entry["provider"],
-                    entry["model"],
-                    entry["thinking"],
+            required = ("run_id", "provider", "model", "thinking", "scenario")
+            if not isinstance(entry, dict) or any(
+                not isinstance(entry.get(k), str) for k in required
+            ):
+                raise ValueError(
+                    "run_id, model configuration, and scenario are required"
                 )
-            )
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise ValueError(f"Invalid sampling manifest line {line_number}: {exc}") from exc
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", entry["run_id"]) or entry["run_id"] in {".", ".."}:
+                raise ValueError("run_id must be a safe directory name")
+            if entry["run_id"] in seen:
+                raise ValueError(f"duplicate run_id {entry['run_id']}")
+            seen.add(entry["run_id"])
+            runs.append(entry)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid sampling manifest line {line_number}: {exc}"
+            ) from exc
     return tuple(runs)
 
 
+SCENARIOS = _load_scenarios()
+COMMON_CRITERIA = _load_criteria()
 RUNS = _load_runs()
 
 
 def _as_text(value: str | bytes | None) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value or ""
+    return (
+        value.decode("utf-8", errors="replace")
+        if isinstance(value, bytes)
+        else value or ""
+    )
 
 
 def _text_content(content: Any) -> str:
@@ -106,9 +115,7 @@ def _tool_event_name(event: dict[str, Any]) -> str | None:
 
 
 def _tool_result_text(result: Any) -> str:
-    if not isinstance(result, dict):
-        return ""
-    return _text_content(result.get("content"))
+    return _text_content(result.get("content")) if isinstance(result, dict) else ""
 
 
 def _tool_status(event: dict[str, Any]) -> str:
@@ -116,9 +123,11 @@ def _tool_status(event: dict[str, Any]) -> str:
     if isinstance(is_error, bool):
         if not is_error:
             return "completed"
-        if _tool_result_text(event.get("result")).startswith(BLOCKED_REASON_PREFIX):
-            return "blocked"
-        return "error"
+        return (
+            "blocked"
+            if _tool_result_text(event.get("result")).startswith(BLOCKED_REASON_PREFIX)
+            else "error"
+        )
     return "unknown"
 
 
@@ -131,27 +140,22 @@ def _gate_blocks(stderr: str) -> dict[str, str]:
             record = json.loads(line.removeprefix(GATE_AUDIT_PREFIX))
         except json.JSONDecodeError:
             continue
-        if not isinstance(record, dict):
-            continue
-        tool_call_id = record.get("toolCallId")
-        reason = record.get("reason")
-        if isinstance(tool_call_id, str) and isinstance(reason, str):
-            blocks[tool_call_id] = reason
+        if (
+            isinstance(record, dict)
+            and isinstance(record.get("toolCallId"), str)
+            and isinstance(record.get("reason"), str)
+        ):
+            blocks[record["toolCallId"]] = record["reason"]
     return blocks
 
 
 def _details(
     lines: str, gate_blocks: dict[str, str] | None = None
 ) -> tuple[list[dict[str, Any]], str]:
-    """Parse tool lifecycle events and the last assistant reply from JSONL.
-
-    Tool starts define attempt order. End events only update the matching attempt;
-    no attempt is removed or collapsed when the same tool is called repeatedly.
-    """
-    gate_blocks = gate_blocks or {}
-    tool_attempts: list[dict[str, Any]] = []
-    attempts_by_id: dict[str, dict[str, Any]] = {}
-    assistant_replies: list[str] = []
+    """Return every tool attempt in stream order and the last assistant reply."""
+    attempts: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    replies: list[str] = []
     for line in lines.splitlines():
         try:
             event = json.loads(line)
@@ -159,88 +163,80 @@ def _details(
             continue
         if not isinstance(event, dict):
             continue
-
-        event_type = event.get("type")
-        if event_type == "tool_execution_start":
-            attempt: dict[str, Any] = {
+        if event.get("type") == "tool_execution_start":
+            attempt = {
                 "tool_name": _tool_event_name(event),
                 "arguments": event.get("args"),
                 "status": "unknown",
             }
-            tool_call_id = event.get("toolCallId")
-            if isinstance(tool_call_id, str):
-                attempt["tool_call_id"] = tool_call_id
-                attempts_by_id[tool_call_id] = attempt
-            tool_attempts.append(attempt)
-        elif event_type == "tool_execution_end":
-            tool_call_id = event.get("toolCallId")
-            matched_attempt: dict[str, Any] | None = (
-                attempts_by_id.get(tool_call_id)
-                if isinstance(tool_call_id, str)
-                else None
-            )
-            if matched_attempt is None:
-                # Be conservative if a producer emits an end without its start.
-                unmatched_attempt = {
+            call_id = event.get("toolCallId")
+            if isinstance(call_id, str):
+                attempt["tool_call_id"] = call_id
+                by_id[call_id] = attempt
+            attempts.append(attempt)
+        elif event.get("type") == "tool_execution_end":
+            call_id = event.get("toolCallId")
+            attempt = by_id.get(call_id) if isinstance(call_id, str) else None
+            if attempt is None:
+                attempt = {
                     "tool_name": _tool_event_name(event),
                     "arguments": event.get("args"),
                     "status": "unknown",
                 }
-                if isinstance(tool_call_id, str):
-                    unmatched_attempt["tool_call_id"] = tool_call_id
-                    attempts_by_id[tool_call_id] = unmatched_attempt
-                tool_attempts.append(unmatched_attempt)
-                matched_attempt = unmatched_attempt
-            matched_attempt["status"] = _tool_status(event)
-
+                if isinstance(call_id, str):
+                    attempt["tool_call_id"] = call_id
+                    by_id[call_id] = attempt
+                attempts.append(attempt)
+            attempt["status"] = _tool_status(event)
         message = event.get("message")
         if isinstance(message, dict) and message.get("role") == "assistant":
             text = _text_content(message.get("content"))
             if text:
-                assistant_replies.append(text)
+                replies.append(text)
         if event.get("role") == "assistant":
             text = _text_content(event.get("content"))
             if text:
-                assistant_replies.append(text)
-
-    for tool_call_id, reason in gate_blocks.items():
-        blocked_attempt = attempts_by_id.get(tool_call_id)
-        if blocked_attempt is not None:
-            blocked_attempt["status"] = "blocked"
-            blocked_attempt["blocked_reason"] = reason
-
-    return tool_attempts, assistant_replies[-1] if assistant_replies else ""
-
-
-def _fence(text: str) -> tuple[str, str]:
-    longest = max(
-        (
-            len(part)
-            for part in text.split("\n")
-            if part.startswith("`") and part.endswith("`")
-        ),
-        default=0,
-    )
-    return "`" * max(3, longest + 1), text
+                replies.append(text)
+    for call_id, reason in (gate_blocks or {}).items():
+        if call_id in by_id:
+            by_id[call_id]["status"] = "blocked"
+            by_id[call_id]["blocked_reason"] = reason
+    return attempts, replies[-1] if replies else ""
 
 
 def _run(
     output_dir: Path,
-    label: str,
-    provider: str,
-    model: str,
-    thinking: str,
-    scenario: str,
-    prompt: str,
+    run: dict[str, Any],
+    scenario: dict[str, Any],
+    common_criteria: list[Any],
 ) -> dict[str, Any]:
+    run_id = run["run_id"]
+    run_dir = output_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    case = {
+        "run_id": run_id,
+        "model": {
+            "provider": run["provider"],
+            "model": run["model"],
+            "thinking": run["thinking"],
+        },
+        "prompt": scenario["prompt"],
+        "criteria": {
+            "common": common_criteria,
+            "scenario": scenario.get("criteria", []),
+        },
+    }
+    (run_dir / "case.json").write_text(
+        json.dumps(case, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     command = [
         "pi",
         "--provider",
-        provider,
+        run["provider"],
         "--model",
-        model,
+        run["model"],
         "--thinking",
-        thinking,
+        run["thinking"],
         "--mode",
         "json",
         "--print",
@@ -255,7 +251,7 @@ def _run(
         str(SKILL_PATH),
         "--extension",
         str(GATE_EXTENSION_PATH),
-        prompt,
+        scenario["prompt"],
     ]
     started = datetime.now(timezone.utc)
     start = time.monotonic()
@@ -264,140 +260,112 @@ def _run(
     try:
         completed = subprocess.run(
             command,
-            cwd=Path(__file__).resolve().parents[1],
+            cwd=ROOT,
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
             check=False,
         )
-        raw = completed.stdout
-        returncode = completed.returncode
-        stderr = completed.stderr
+        raw, returncode, stderr = (
+            completed.stdout,
+            completed.returncode,
+            completed.stderr,
+        )
     except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        raw = _as_text(exc.stdout)
-        stderr = _as_text(exc.stderr)
-        returncode = None
+        timed_out, raw, stderr, returncode = (
+            True,
+            _as_text(exc.stdout),
+            _as_text(exc.stderr),
+            None,
+        )
     except OSError as exc:
-        raw = ""
-        stderr = ""
-        returncode = None
-        error = repr(exc)
-    raw_path = output_dir / f"{label}-{scenario}.jsonl"
-    raw_path.write_text(raw, encoding="utf-8")
-    tool_attempts, reply = _details(raw, _gate_blocks(stderr))
-    if timed_out:
-        run_status = "timed_out"
-    elif error:
-        run_status = "launch_error"
-    elif returncode == 0:
-        run_status = "completed"
-    else:
-        run_status = "failed"
+        raw, stderr, returncode, error = "", "", None, repr(exc)
+    trace_path = run_dir / "trace.jsonl"
+    trace_path.write_text(raw, encoding="utf-8")
+    attempts, reply = _details(raw, _gate_blocks(stderr))
+    status = (
+        "timed_out"
+        if timed_out
+        else "launch_error"
+        if error
+        else "completed"
+        if returncode == 0
+        else "failed"
+    )
     return {
-        "label": label,
-        "scenario": scenario,
-        "model": model,
-        "thinking": thinking,
-        "provider": provider,
-        "prompt": prompt,
-        "timeout_seconds": TIMEOUT_SECONDS,
+        "run_id": run_id,
+        "model": case["model"],
+        "scenario": scenario["id"],
         "started_at": started.isoformat(),
         "elapsed_seconds": round(time.monotonic() - start, 3),
         "returncode": returncode,
-        "run_status": run_status,
+        "run_status": status,
         "timed_out": timed_out,
         "error": error,
         "stderr": stderr,
-        "raw_stream": raw_path.name,
-        "tool_attempts": tool_attempts,
+        "case_path": str(Path(run_id) / "case.json"),
+        "trace_path": str(Path(run_id) / "trace.jsonl"),
+        "tool_attempts": attempts,
         "final_assistant_reply": reply,
     }
 
 
 def _first_gate_block_index(attempts: list[dict[str, Any]]) -> int | None:
     return next(
-        (
-            index
-            for index, attempt in enumerate(attempts)
-            if attempt.get("status") == "blocked"
-        ),
+        (i for i, attempt in enumerate(attempts) if attempt.get("status") == "blocked"),
         None,
     )
 
 
-def _write_report(output_dir: Path, results: list[dict[str, Any]]) -> None:
-    status_counts = {
-        status: sum(result["run_status"] == status for result in results)
-        for status in ("completed", "failed", "timed_out", "launch_error")
-    }
+def _fence(text: str) -> str:
+    """Return a backtick fence longer than any backtick run in *text*."""
+    longest = max((len(match.group()) for match in re.finditer(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def _write_report(output_dir: Path, result: dict[str, Any]) -> None:
+    """Write the self-contained report for one run, beside its artifacts."""
+    attempts = result["tool_attempts"]
+    first = _first_gate_block_index(attempts)
+    primary = attempts if first is None else attempts[: first + 1]
+    later = [] if first is None else attempts[first + 1 :]
+    reply_fence = _fence(result["final_assistant_reply"])
     report = [
         "# Behavior sampling report",
         "",
-        "Generated mechanically from the saved JSONL streams.",
+        "Generated mechanically from this run's `trace.jsonl`; the case and trace artifacts are linked below.",
         "",
-        (
-            "The sampler exit status describes sampling completeness, not "
-            "behavioral compliance. Assess the first substantive intent before "
-            "the gate intervenes; attempts after the first gate block are retained "
-            "only for audit."
-        ),
+        "The sampler exit status describes sampling completeness, not behavioral compliance. Assess the first substantive intent before the gate intervenes; attempts after the first gate block are retained only for audit.",
         "",
-        "## Sampling completeness",
+        f"## {result['run_id']} / {result['scenario']}",
         "",
-        f"- Planned runs: {len(results)}",
-        f"- Completed: {status_counts['completed']}",
-        f"- Failed: {status_counts['failed']}",
-        f"- Timed out: {status_counts['timed_out']}",
-        f"- Launch errors: {status_counts['launch_error']}",
+        "- Case: [`case.json`](case.json)",
+        "- Trace: [`trace.jsonl`](trace.jsonl)",
+        "",
+        "### Attempts through the first gate block",
+        "",
+        "```json",
+        json.dumps(primary, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "### Attempts after the first gate block",
+        "",
+        "Retained for audit; do not use these attempts to assess Skill induction.",
+        "",
+        "```json",
+        json.dumps(later, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "### Final assistant reply",
+        "",
+        reply_fence,
+        result["final_assistant_reply"],
+        reply_fence,
         "",
     ]
-    for result in results:
-        attempts = result["tool_attempts"]
-        first_block = _first_gate_block_index(attempts)
-        primary_attempts = attempts if first_block is None else attempts[: first_block + 1]
-        later_attempts = [] if first_block is None else attempts[first_block + 1 :]
-        report.extend(
-            [
-                f"## {result['label']} / {result['scenario']}",
-                "",
-                "### Run metadata",
-                "",
-                "```json",
-                json.dumps(
-                    {
-                        k: v
-                        for k, v in result.items()
-                        if k not in {"tool_attempts", "final_assistant_reply"}
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                "```",
-                "",
-                "### Attempts through the first gate block",
-                "",
-                "Use this section to identify the first substantive intent.",
-                "",
-                "```json",
-                json.dumps(primary_attempts, ensure_ascii=False, indent=2),
-                "```",
-                "",
-                "### Attempts after the first gate block",
-                "",
-                "Retained for audit; do not use these attempts to assess Skill induction.",
-                "",
-                "```json",
-                json.dumps(later_attempts, ensure_ascii=False, indent=2),
-                "```",
-                "",
-                "### Final assistant reply",
-                "",
-            ]
-        )
-        fence, reply = _fence(result["final_assistant_reply"])
-        report.extend([fence, reply, fence, ""])
-    (output_dir / "report.md").write_text("\n".join(report), encoding="utf-8")
+    run_dir = output_dir / result["run_id"]
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "report.md").write_text("\n".join(report), encoding="utf-8")
 
 
 def main() -> int:
@@ -405,12 +373,17 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("behavior-sampling"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    results = [
-        _run(args.output, *run, scenario, prompt)
-        for run in RUNS
-        for scenario, prompt in SCENARIOS
-    ]
-    _write_report(args.output, results)
+    results = []
+    for run in RUNS:
+        try:
+            scenario = SCENARIOS[run["scenario"]]
+        except KeyError as exc:
+            raise ValueError(
+                f"Manifest references unknown scenario: {run['scenario']}"
+            ) from exc
+        result = _run(args.output, run, scenario, COMMON_CRITERIA)
+        results.append(result)
+        _write_report(args.output, result)
     return 0 if all(result["run_status"] == "completed" for result in results) else 1
 
 
