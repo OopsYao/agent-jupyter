@@ -152,6 +152,18 @@ def test_report_keeps_full_attempts_and_final_reply(tmp_path: Path) -> None:
     assert "Attempts after the first gate block" in report
 
 
+def test_load_runs_reads_provider_model_and_thinking(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text(
+        '{"label":"sample","provider":"provider","model":"model","thinking":"high"}\n',
+        encoding="utf-8",
+    )
+
+    assert sample_behavior._load_runs(manifest) == (
+        ("sample", "provider", "model", "high"),
+    )
+
+
 def test_run_wires_only_the_explicit_gate_with_read_and_bash(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -172,6 +184,7 @@ def test_run_wires_only_the_explicit_gate_with_read_and_bash(
     sample_behavior._run(
         tmp_path,
         "sample",
+        "provider",
         "provider/model",
         "off",
         "explicit-connection",
@@ -179,6 +192,7 @@ def test_run_wires_only_the_explicit_gate_with_read_and_bash(
     )
     command = captured["command"]
     assert isinstance(command, list)
+    assert command[command.index("--provider") + 1] == "provider"
     assert "--no-extensions" in command
     assert command[command.index("--extension") + 1] == str(
         sample_behavior.GATE_EXTENSION_PATH
@@ -200,6 +214,7 @@ def test_run_marks_nonzero_pi_exit_as_failed(tmp_path: Path, monkeypatch) -> Non
     result = sample_behavior._run(
         tmp_path,
         "sample",
+        "provider",
         "provider/model",
         "off",
         "explicit-connection",
@@ -213,7 +228,9 @@ def test_run_marks_nonzero_pi_exit_as_failed(tmp_path: Path, monkeypatch) -> Non
 def test_main_exit_code_describes_sampling_completeness(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr(sample_behavior, "RUNS", (("sample", "model", "off"),))
+    monkeypatch.setattr(
+        sample_behavior, "RUNS", (("sample", "provider", "model", "off"),)
+    )
     monkeypatch.setattr(sample_behavior, "SCENARIOS", (("scenario", "prompt"),))
     monkeypatch.setattr(sys, "argv", ["sample_behavior", "--output", str(tmp_path)])
     monkeypatch.setattr(

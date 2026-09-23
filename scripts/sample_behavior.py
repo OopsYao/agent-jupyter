@@ -53,15 +53,33 @@ SKILL_PATH = (
     / "src/agent_jupyter/resources/agent_jupyter_skill.md"
 )
 TIMEOUT_SECONDS = 120
-RUNS = (
-    ("moonshotai-kimi-k2.5-off", "moonshotai/kimi-k2.5", "off"),
-    ("moonshotai-kimi-k2.5-medium", "moonshotai/kimi-k2.5", "medium"),
-    ("qwen-qwen3.6-plus-off", "qwen/qwen3.6-plus", "off"),
-    ("qwen-qwen3.6-plus-medium", "qwen/qwen3.6-plus", "medium"),
-)
+MANIFEST_PATH = Path(__file__).resolve().with_name("sample_manifest.jsonl")
 GATE_EXTENSION_PATH = Path(__file__).resolve().with_name("sample_gate.ts")
 BLOCKED_REASON_PREFIX = "Behavior sampler gate blocked:"
 GATE_AUDIT_PREFIX = "AGENT_JUPYTER_SAMPLE_GATE:"
+
+
+def _load_runs(path: Path = MANIFEST_PATH) -> tuple[tuple[str, str, str, str], ...]:
+    runs = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+            runs.append(
+                (
+                    entry["label"],
+                    entry["provider"],
+                    entry["model"],
+                    entry["thinking"],
+                )
+            )
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise ValueError(f"Invalid sampling manifest line {line_number}: {exc}") from exc
+    return tuple(runs)
+
+
+RUNS = _load_runs()
 
 
 def _as_text(value: str | bytes | None) -> str:
@@ -209,6 +227,7 @@ def _fence(text: str) -> tuple[str, str]:
 def _run(
     output_dir: Path,
     label: str,
+    provider: str,
     model: str,
     thinking: str,
     scenario: str,
@@ -217,7 +236,7 @@ def _run(
     command = [
         "pi",
         "--provider",
-        "openrouter",
+        provider,
         "--model",
         model,
         "--thinking",
@@ -280,7 +299,7 @@ def _run(
         "scenario": scenario,
         "model": model,
         "thinking": thinking,
-        "provider": "openrouter",
+        "provider": provider,
         "prompt": prompt,
         "timeout_seconds": TIMEOUT_SECONDS,
         "started_at": started.isoformat(),

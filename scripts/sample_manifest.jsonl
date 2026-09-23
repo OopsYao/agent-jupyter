@@ -1,0 +1,6 @@
+{"label":"moonshotai-kimi-k2.5-off","provider":"openrouter","model":"moonshotai/kimi-k2.5","thinking":"off"}
+{"label":"moonshotai-kimi-k2.5-medium","provider":"openrouter","model":"moonshotai/kimi-k2.5","thinking":"medium"}
+{"label":"qwen-qwen3.6-plus-off","provider":"openrouter","model":"qwen/qwen3.6-plus","thinking":"off"}
+{"label":"qwen-qwen3.6-plus-medium","provider":"openrouter","model":"qwen/qwen3.6-plus","thinking":"medium"}
+{"label":"qwen-qwen3.8-27b-off","provider":"openrouter","model":"qwen/qwen3.8-27b","thinking":"off"}
+{"label":"qwen-qwen3.8-27b-medium","provider":"openrouter","model":"qwen/qwen3.8-27b","thinking":"medium"}
