@@ -19,7 +19,7 @@ def _event(event_type: str, **fields: object) -> str:
 
 def test_manifest_has_unique_explicit_rows_and_no_cartesian_runtime() -> None:
     runs = sample_behavior._load_runs()
-    assert len(runs) == 48
+    assert len(runs) == len(sample_behavior.SCENARIOS) * 4
     assert len({run["run_id"] for run in runs}) == len(runs)
     assert {run["scenario"] for run in runs} == set(sample_behavior.SCENARIOS)
     assert all(
@@ -34,6 +34,71 @@ def test_scenario_and_common_criteria_are_separate() -> None:
         "prompt" in scenario and "criteria" in scenario
         for scenario in sample_behavior.SCENARIOS.values()
     )
+
+
+def test_skill_read_audit_requires_matching_successful_end_and_reports_order() -> None:
+    skill_path = str(sample_behavior.SKILL_PATH)
+    raw = "\n".join(
+        [
+            _event(
+                "tool_execution_start",
+                toolCallId="read-skill",
+                toolName="read",
+                args={"path": skill_path},
+            ),
+            _event(
+                "tool_execution_end",
+                toolCallId="read-skill",
+                toolName="read",
+                isError=False,
+            ),
+            _event(
+                "tool_execution_start",
+                toolCallId="bash-1",
+                toolName="bash",
+                args={"command": "true"},
+            ),
+            _event(
+                "tool_execution_end",
+                toolCallId="bash-1",
+                toolName="bash",
+                isError=True,
+                result={
+                    "content": [
+                        {"type": "text", "text": "Behavior sampler gate blocked: test"}
+                    ]
+                },
+            ),
+        ]
+    )
+    audit = sample_behavior._skill_read_audit(raw, {"bash-1": "blocked"})
+    assert audit["attempted"] is True
+    assert audit["completed_successfully"] is True
+    assert audit["matching_end"] is True
+    assert audit["is_error_false"] is True
+    assert audit["before_first_bash_attempt"] is True
+    assert audit["before_first_gate"] is True
+
+    failed = "\n".join(
+        [
+            _event(
+                "tool_execution_start",
+                toolCallId="read-skill",
+                toolName="read",
+                args={"path": skill_path},
+            ),
+            _event(
+                "tool_execution_end",
+                toolCallId="other-id",
+                toolName="read",
+                isError=False,
+            ),
+        ]
+    )
+    failed_audit = sample_behavior._skill_read_audit(failed)
+    assert failed_audit["attempted"] is True
+    assert failed_audit["completed_successfully"] is False
+    assert failed_audit["matching_end"] is False
 
 
 def test_details_preserves_repeated_attempts_and_gate_order() -> None:
@@ -105,12 +170,28 @@ def test_run_writes_case_and_trace_in_run_directory(
     tmp_path: Path, monkeypatch
 ) -> None:
     class Completed:
-        stdout = _event(
-            "message_end",
-            message={
-                "role": "assistant",
-                "content": [{"type": "text", "text": "done"}],
-            },
+        stdout = "\n".join(
+            [
+                _event(
+                    "tool_execution_start",
+                    toolCallId="read-skill",
+                    toolName="read",
+                    args={"path": str(sample_behavior.SKILL_PATH)},
+                ),
+                _event(
+                    "tool_execution_end",
+                    toolCallId="read-skill",
+                    toolName="read",
+                    isError=False,
+                ),
+                _event(
+                    "message_end",
+                    message={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "done"}],
+                    },
+                ),
+            ]
         )
         stderr = ""
         returncode = 0
@@ -140,6 +221,10 @@ def test_run_writes_case_and_trace_in_run_directory(
     assert (tmp_path / "unique-run" / "trace.jsonl").exists()
     assert result["case_path"] == "unique-run/case.json"
     assert result["trace_path"] == "unique-run/trace.jsonl"
+    assert result["skill_read_audit"]["completed_successfully"] is True
+    sample_behavior._write_report(tmp_path, result)
+    report = (tmp_path / "unique-run" / "report.md").read_text()
+    assert '"completed_successfully": true' in report
 
 
 def test_each_run_gets_an_independent_report_and_no_aggregate(tmp_path: Path) -> None:
@@ -167,6 +252,35 @@ def test_each_run_gets_an_independent_report_and_no_aggregate(tmp_path: Path) ->
         assert "criteria" not in report
         assert "exit status describes sampling completeness" in report
         assert "Attempts after the first gate block" in report
+
+
+def test_report_includes_mechanical_skill_read_section(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    sample_behavior._write_report(
+        tmp_path,
+        {
+            "run_id": "run",
+            "scenario": "s",
+            "run_status": "completed",
+            "case_path": "run/case.json",
+            "trace_path": "run/trace.jsonl",
+            "tool_attempts": [],
+            "final_assistant_reply": "reply",
+            "skill_read_audit": {
+                "attempted": False,
+                "completed_successfully": False,
+                "matching_end": False,
+                "is_error_false": False,
+                "before_first_bash_attempt": None,
+                "before_first_gate": None,
+            },
+        },
+    )
+    report = (run_dir / "report.md").read_text()
+    assert "### Exact project Skill read (mechanical)" in report
+    assert '"completed_successfully": false' in report
+    assert "does not infer Skill compliance" in report
 
 
 def test_report_uses_a_safe_fence_for_replies_with_backticks(tmp_path: Path) -> None:

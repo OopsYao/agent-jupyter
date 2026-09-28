@@ -71,7 +71,9 @@ def _load_runs(path: Path = MANIFEST_PATH) -> tuple[dict[str, Any], ...]:
                 raise ValueError(
                     "run_id, model configuration, and scenario are required"
                 )
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", entry["run_id"]) or entry["run_id"] in {".", ".."}:
+            if not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]*", entry["run_id"]
+            ) or entry["run_id"] in {".", ".."}:
                 raise ValueError("run_id must be a safe directory name")
             if entry["run_id"] in seen:
                 raise ValueError(f"duplicate run_id {entry['run_id']}")
@@ -282,7 +284,8 @@ def _run(
         raw, stderr, returncode, error = "", "", None, repr(exc)
     trace_path = run_dir / "trace.jsonl"
     trace_path.write_text(raw, encoding="utf-8")
-    attempts, reply = _details(raw, _gate_blocks(stderr))
+    gate_blocks = _gate_blocks(stderr)
+    attempts, reply = _details(raw, gate_blocks)
     status = (
         "timed_out"
         if timed_out
@@ -307,6 +310,7 @@ def _run(
         "trace_path": str(Path(run_id) / "trace.jsonl"),
         "tool_attempts": attempts,
         "final_assistant_reply": reply,
+        "skill_read_audit": _skill_read_audit(raw, gate_blocks),
     }
 
 
@@ -315,6 +319,106 @@ def _first_gate_block_index(attempts: list[dict[str, Any]]) -> int | None:
         (i for i, attempt in enumerate(attempts) if attempt.get("status") == "blocked"),
         None,
     )
+
+
+def _skill_read_audit(
+    lines: str, gate_blocks: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Mechanically describe the exact Skill read; infer no behavioral compliance."""
+    events: list[dict[str, Any]] = []
+    for line in lines.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+
+    reads: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    for index, event in enumerate(events):
+        event_type = event.get("type")
+        if event_type == "tool_execution_start":
+            args = event.get("args")
+            if (
+                _tool_event_name(event) == "read"
+                and isinstance(args, dict)
+                and args.get("path") == str(SKILL_PATH)
+            ):
+                call_id = event.get("toolCallId")
+                read = {
+                    "start_event": index,
+                    "tool_call_id": call_id if isinstance(call_id, str) else None,
+                    "end_event": None,
+                    "matching_end": False,
+                    "is_error_false": False,
+                }
+                reads.append(read)
+                if isinstance(call_id, str):
+                    by_id[call_id] = read
+        elif event_type == "tool_execution_end":
+            call_id = event.get("toolCallId")
+            read = by_id.get(call_id) if isinstance(call_id, str) else None
+            if read is not None:
+                read["end_event"] = index
+                read["matching_end"] = True
+                read["is_error_false"] = isinstance(
+                    event.get("isError"), bool
+                ) and not event.get("isError")
+
+    first_bash = next(
+        (
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "tool_execution_start"
+            and _tool_event_name(event) == "bash"
+        ),
+        None,
+    )
+    gate_call_ids = set(gate_blocks or {})
+    first_gate = next(
+        (
+            i
+            for i, event in enumerate(events)
+            if event.get("type") == "tool_execution_end"
+            and (
+                (
+                    isinstance(event.get("toolCallId"), str)
+                    and event.get("toolCallId") in gate_call_ids
+                )
+                or _tool_status(event) == "blocked"
+            )
+        ),
+        None,
+    )
+    for read in reads:
+        end = read["end_event"]
+        read["before_first_bash_attempt"] = first_bash is None or (
+            end is not None and end < first_bash
+        )
+        read["before_first_gate"] = first_gate is None or (
+            end is not None and end < first_gate
+        )
+    selected = next(
+        (read for read in reads if read["matching_end"] and read["is_error_false"]),
+        reads[0] if reads else None,
+    )
+    return {
+        "skill_path": str(SKILL_PATH),
+        "attempted": bool(reads),
+        "completed_successfully": bool(
+            selected and selected["matching_end"] and selected["is_error_false"]
+        ),
+        "matching_end": selected["matching_end"] if selected else False,
+        "is_error_false": selected["is_error_false"] if selected else False,
+        "before_first_bash_attempt": (
+            selected["before_first_bash_attempt"] if selected else None
+        ),
+        "before_first_gate": selected["before_first_gate"] if selected else None,
+        "first_bash_attempt_event": first_bash,
+        "first_gate_event": first_gate,
+        "read_count": len(reads),
+    }
 
 
 def _fence(text: str) -> str:
@@ -330,6 +434,17 @@ def _write_report(output_dir: Path, result: dict[str, Any]) -> None:
     primary = attempts if first is None else attempts[: first + 1]
     later = [] if first is None else attempts[first + 1 :]
     reply_fence = _fence(result["final_assistant_reply"])
+    skill_read_audit = result.get(
+        "skill_read_audit",
+        {
+            "attempted": False,
+            "completed_successfully": False,
+            "matching_end": False,
+            "is_error_false": False,
+            "before_first_bash_attempt": None,
+            "before_first_gate": None,
+        },
+    )
     report = [
         "# Behavior sampling report",
         "",
@@ -341,6 +456,14 @@ def _write_report(output_dir: Path, result: dict[str, Any]) -> None:
         "",
         "- Case: [`case.json`](case.json)",
         "- Trace: [`trace.jsonl`](trace.jsonl)",
+        "",
+        "### Exact project Skill read (mechanical)",
+        "",
+        "This records tool-event facts only; it does not infer Skill compliance.",
+        "",
+        "```json",
+        json.dumps(skill_read_audit, ensure_ascii=False, indent=2),
+        "```",
         "",
         "### Attempts through the first gate block",
         "",
